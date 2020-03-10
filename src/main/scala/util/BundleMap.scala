@@ -65,18 +65,43 @@ object BundleField {
 
 sealed trait BundleKeyBase {
   def name: String
-}
 
-sealed class BundleKey[T <: Data](val name: String) extends BundleKeyBase
+  def isRequest: Boolean = this match {
+    case _: RequestKey => true
+    case _: EchoKey    => true
+    case _             => false
+  }
+
+  def isResponse: Boolean = this match {
+    case _: ResponseKey => true
+    case _: EchoKey     => true
+    case _              => false
+  }
+
+  def isEcho: Boolean = this match {
+    case _: EchoKey => true
+    case _          => false
+  }
+
+  def isControl: Boolean = this match {
+    case _: ControlKey => true
+    case _            => false
+  }
+
+  def isData: Boolean = this match {
+    case _: DataKey => true
+    case _          => false
+  }
+}
 
 /* Custom bundle fields have two broad categories:
  *  - data fields (which are per-beat/byte and should be widened by bus-width adapters)
  *  - control fields (which are per-burst and are unaffected by width adapters)
  */
-abstract sealed class DataKey   [T <: Data](name: String) extends BundleKey[T](name)
-abstract sealed class ControlKey[T <: Data](name: String) extends BundleKey[T](name)
+trait DataKey
+trait ControlKey
 
-/* Control signals can be further categorized in a request-response protocol:
+/* Signals can be further categorized in a request-response protocol:
  *  - request fields flow from master to slave
  *  - response fields flow from slave to master
  *  - echo fields flow from master to slave to master; a master must receive the same value in the response as he sent in the request
@@ -85,13 +110,15 @@ trait RequestKey
 trait ResponseKey
 trait EchoKey
 
-abstract class ControlRequestKey [T <: Data](name: String) extends ControlKey[T](name) with RequestKey
-abstract class ControlResponseKey[T <: Data](name: String) extends ControlKey[T](name) with ResponseKey
-abstract class ControlEchoKey    [T <: Data](name: String) extends ControlKey[T](name) with EchoKey
+sealed class BundleKey[T <: Data](val name: String) extends BundleKeyBase
 
-abstract class DataRequestKey [T <: Data](name: String) extends DataKey[T](name) with RequestKey
-abstract class DataResponseKey[T <: Data](name: String) extends DataKey[T](name) with ResponseKey
-abstract class DataEchoKey    [T <: Data](name: String) extends DataKey[T](name) with EchoKey
+abstract class ControlRequestKey [T <: Data](name: String) extends BundleKey[T](name) with ControlKey with RequestKey
+abstract class ControlResponseKey[T <: Data](name: String) extends BundleKey[T](name) with ControlKey with ResponseKey
+abstract class ControlEchoKey    [T <: Data](name: String) extends BundleKey[T](name) with ControlKey with EchoKey
+
+abstract class DataRequestKey [T <: Data](name: String) extends BundleKey[T](name) with DataKey with RequestKey
+abstract class DataResponseKey[T <: Data](name: String) extends BundleKey[T](name) with DataKey with ResponseKey
+abstract class DataEchoKey    [T <: Data](name: String) extends BundleKey[T](name) with DataKey with EchoKey
 
 // If you extend this class, you must either redefine cloneType or have a fields constructor
 class BundleMap(val fields: Seq[BundleFieldBase]) extends Record with CustomBulkAssignable {
@@ -158,6 +185,10 @@ class BundleMap(val fields: Seq[BundleFieldBase]) extends Record with CustomBulk
     }
     // it's ok to have excess elements in 'hx'
   }
+}
+
+object BundleMap {
+  def apply(fields: Seq[BundleFieldBase] = Nil) = new BundleMap(fields)
 }
 
 trait CustomBulkAssignable {
