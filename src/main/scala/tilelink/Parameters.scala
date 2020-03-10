@@ -6,7 +6,7 @@ import Chisel._
 import chisel3.internal.sourceinfo.SourceInfo
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
-import freechips.rocketchip.util.{RationalDirection,AsyncQueueParams, groupByIntoSeq}
+import freechips.rocketchip.util._
 import scala.math.max
 import scala.reflect.ClassTag
 
@@ -25,7 +25,6 @@ case class TLManagerParameters(
   supportsPutFull:    TransferSizes = TransferSizes.none,
   supportsPutPartial: TransferSizes = TransferSizes.none,
   supportsHint:       TransferSizes = TransferSizes.none,
-  userBits:           Seq[UserBits] = Nil,
   // By default, slaves are forbidden from issuing 'denied' responses (it prevents Fragmentation)
   mayDenyGet:         Boolean = false, // applies to: AccessAckData, GrantData
   mayDenyPut:         Boolean = false, // applies to: AccessAck,     Grant,    HintAck
@@ -84,10 +83,6 @@ case class TLManagerParameters(
   }
   def isTree = findTreeViolation() == None
 
-  def getUser[T <: UserBits : ClassTag](x: UInt): Seq[UserBitField[T]] = UserBits.extract[T](userBits, x)
-  def putUser[T <: UserBits : ClassTag](x: UInt, seq: Seq[UInt]): UInt = UserBits.inject[T](userBits, x, seq)
-  val userBitWidth = userBits.map(_.width).sum
-
   def infoString = {
     s"""Manager Name = ${name}
        |Manager Address = ${address}
@@ -108,7 +103,8 @@ case class TLManagerPortParameters(
   managers:   Seq[TLManagerParameters],
   beatBytes:  Int,
   endSinkId:  Int = 0,
-  minLatency: Int = 0)
+  minLatency: Int = 0,
+  userFields: Seq[BundleFieldBase] = Nil)
 {
   require (!managers.isEmpty, "Manager ports must have managers")
   require (isPow2(beatBytes), "Data channel width must be a power of 2")
@@ -222,19 +218,6 @@ case class TLManagerPortParameters(
   def findTreeViolation() = managers.flatMap(_.findTreeViolation()).headOption
   def isTree = !managers.exists(!_.isTree)
 
-  // add some user bits to the same highest offset for every manager
-  val userBitWidth = managers.map(_.userBitWidth).max
-  def addUser[T <: UserBits](userBits: T): TLManagerPortParameters = {
-    this.copy(managers = managers.map { m =>
-      val extra = if (m.userBitWidth == userBitWidth) {
-        Seq(userBits)
-      } else {
-        Seq(PadUserBits(userBitWidth - m.userBitWidth), userBits)
-      }
-      m.copy(userBits = m.userBits ++ extra)
-    })
-  }
-
   def infoString = "Manager Port Beatbytes = " + beatBytes + "\n\n" + managers.map(_.infoString).mkString
 }
 
@@ -251,8 +234,7 @@ case class TLClientParameters(
   supportsGet:         TransferSizes   = TransferSizes.none,
   supportsPutFull:     TransferSizes   = TransferSizes.none,
   supportsPutPartial:  TransferSizes   = TransferSizes.none,
-  supportsHint:        TransferSizes   = TransferSizes.none,
-  userBits:            Seq[UserBits]   = Nil)
+  supportsHint:        TransferSizes   = TransferSizes.none)
 {
   require (!sourceId.isEmpty)
   require (!visibility.isEmpty)
@@ -275,10 +257,6 @@ case class TLClientParameters(
     supportsPutFull.max,
     supportsPutPartial.max).max
 
-  def getUser[T <: UserBits : ClassTag](x: UInt): Seq[UserBitField[T]] = UserBits.extract[T](userBits, x)
-  def putUser[T <: UserBits : ClassTag](x: UInt, seq: Seq[UInt]): UInt = UserBits.inject[T](userBits, x, seq)
-  val userBitWidth = userBits.map(_.width).sum
-
   def infoString = {
     s"""Client Name = ${name}
        |visibility = ${visibility}
@@ -289,7 +267,8 @@ case class TLClientParameters(
 
 case class TLClientPortParameters(
   clients:    Seq[TLClientParameters],
-  minLatency: Int = 0) // Only applies to B=>C
+  minLatency: Int = 0, // Only applies to B=>C
+  userFields: Seq[BundleFieldBase] = Nil)
 {
   require (!clients.isEmpty)
   require (minLatency >= 0)
@@ -354,19 +333,6 @@ case class TLClientPortParameters(
   val supportsPutPartial = safety_helper(_.supportsPutPartial) _
   val supportsHint       = safety_helper(_.supportsHint)       _
 
-  // add some user bits to the same highest offset for every client
-  val userBitWidth = clients.map(_.userBitWidth).max
-  def addUser[T <: UserBits](userBits: T): TLClientPortParameters = {
-    this.copy(clients = clients.map { c =>
-      val extra = if (c.userBitWidth == userBitWidth) {
-        Seq(userBits)
-      } else {
-        Seq(PadUserBits(userBitWidth - c.userBitWidth), userBits)
-      }
-      c.copy(userBits = c.userBits ++ extra)
-    })
-  }
-
   def infoString = clients.map(_.infoString).mkString
 }
 
@@ -376,8 +342,7 @@ case class TLBundleParameters(
   sourceBits:  Int,
   sinkBits:    Int,
   sizeBits:    Int,
-  aUserBits:   Int,
-  dUserBits:   Int,
+  userFields:  Seq[BundleFieldBase],
   hasBCE:      Boolean)
 {
   // Chisel has issues with 0-width wires
@@ -386,8 +351,6 @@ case class TLBundleParameters(
   require (sourceBits  >= 1)
   require (sinkBits    >= 1)
   require (sizeBits    >= 1)
-  require (aUserBits   >= 0)
-  require (dUserBits   >= 0)
   require (isPow2(dataBits))
 
   val addrLoBits = log2Up(dataBits/8)
@@ -399,9 +362,8 @@ case class TLBundleParameters(
       max(sourceBits,  x.sourceBits),
       max(sinkBits,    x.sinkBits),
       max(sizeBits,    x.sizeBits),
-      max(aUserBits,   x.aUserBits),
-      max(dUserBits,   x.dUserBits),
-      hasBCE ||        x.hasBCE)
+      userFields = BundleField.union(userFields ++ x.userFields),
+      hasBCE || x.hasBCE)
 }
 
 object TLBundleParameters
@@ -412,8 +374,7 @@ object TLBundleParameters
     sourceBits  = 1,
     sinkBits    = 1,
     sizeBits    = 1,
-    aUserBits   = 0,
-    dUserBits   = 0,
+    userFields  = Nil,
     hasBCE      = false)
 
   def union(x: Seq[TLBundleParameters]) = x.foldLeft(emptyBundleParams)((x,y) => x.union(y))
@@ -425,8 +386,7 @@ object TLBundleParameters
       sourceBits  = log2Up(client.endSourceId),
       sinkBits    = log2Up(manager.endSinkId),
       sizeBits    = log2Up(log2Ceil(max(client.maxTransfer, manager.maxTransfer))+1),
-      aUserBits   = client .userBitWidth,
-      dUserBits   = manager.userBitWidth,
+      userFields  = BundleField.union(client.userFields ++ manager.userFields),
       hasBCE      = client.anySupportProbe && manager.anySupportAcquireB)
 }
 

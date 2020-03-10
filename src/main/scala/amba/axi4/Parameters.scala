@@ -6,7 +6,7 @@ import Chisel._
 import chisel3.internal.sourceinfo.SourceInfo
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
-import freechips.rocketchip.util.AsyncQueueParams
+import freechips.rocketchip.util._
 import scala.math.max
 
 case class AXI4SlaveParameters(
@@ -46,7 +46,8 @@ case class AXI4SlavePortParameters(
   slaves:     Seq[AXI4SlaveParameters],
   beatBytes:  Int,
   wcorrupt:   Boolean = false,
-  minLatency: Int = 1)
+  minLatency: Int = 1,
+  userFields: Seq[BundleFieldBase] = Nil)
 {
   require (!slaves.isEmpty)
   require (isPow2(beatBytes))
@@ -82,12 +83,9 @@ case class AXI4MasterParameters(
 
 case class AXI4MasterPortParameters(
   masters:    Seq[AXI4MasterParameters],
-  opaqueBits: Int = 0, // length of bits that need to be propagated after userBits offset in the user field
-  userBits:   Int = 0)
+  userFields: Seq[BundleFieldBase] = Nil)
 {
   val endId = masters.map(_.id.end).max
-  require (opaqueBits >= 0)
-  require (userBits >= 0)
 
   // Require disjoint ranges for ids
   IdRange.overlaps(masters.map(_.id)).foreach { case (x, y) =>
@@ -99,8 +97,7 @@ case class AXI4BundleParameters(
   addrBits:   Int,
   dataBits:   Int,
   idBits:     Int,
-  opaqueBits: Int = 0,
-  userBits:   Int = 0,
+  userFields: Seq[BundleFieldBase] = Nil,
   wcorrupt:   Boolean = false)
 {
   require (dataBits >= 8, s"AXI4 data bits must be >= 8 (got $dataBits)")
@@ -123,14 +120,13 @@ case class AXI4BundleParameters(
       max(addrBits,   x.addrBits),
       max(dataBits,   x.dataBits),
       max(idBits,     x.idBits),
-      max(opaqueBits, x.opaqueBits),
-      max(userBits,   x.userBits),
+      BundleField.union(userFields ++ x.userFields),
       wcorrupt || x.wcorrupt)
 }
 
 object AXI4BundleParameters
 {
-  val emptyBundleParams = AXI4BundleParameters(addrBits=1, dataBits=8, idBits=1, opaqueBits=0, userBits=0, wcorrupt=false)
+  val emptyBundleParams = AXI4BundleParameters(addrBits=1, dataBits=8, idBits=1, userFields=Nil, wcorrupt=false)
   def union(x: Seq[AXI4BundleParameters]) = x.foldLeft(emptyBundleParams)((x,y) => x.union(y))
 
   def apply(master: AXI4MasterPortParameters, slave: AXI4SlavePortParameters) =
@@ -138,8 +134,7 @@ object AXI4BundleParameters
       addrBits   = log2Up(slave.maxAddress+1),
       dataBits   = slave.beatBytes * 8,
       idBits     = log2Up(master.endId),
-      opaqueBits = master.opaqueBits,
-      userBits   = master.userBits,
+      userFields = BundleField.union(master.userFields ++ slave.userFields),
       wcorrupt   = slave.wcorrupt)
 }
 

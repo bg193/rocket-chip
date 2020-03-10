@@ -7,7 +7,7 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper._
 import freechips.rocketchip.interrupts.{IntSourceNode, IntSourcePortSimple}
-import freechips.rocketchip.util.{HeterogeneousBag, MaskGen}
+import freechips.rocketchip.util._
 import scala.math.{min,max}
 
 case class AHBRegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes: Int = 4, undefZero: Boolean = true, executable: Boolean = false)(implicit valName: ValName)
@@ -37,6 +37,7 @@ case class AHBRegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes:
     val d_read  = Reg(Bool())
     val d_index = Reg(UInt(width = indexBits))
     val d_mask  = Reg(UInt(width = beatBytes))
+    val d_user  = Reg(BundleMap(ahb.params.userFields.filter(_.key.isEcho)))
 
     // Only send the request to the RR once
     d_taken := d_phase && in.ready
@@ -52,6 +53,7 @@ case class AHBRegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes:
     ahb.hreadyout := !d_phase || out.valid
     ahb.hresp     := AHBParameters.RESP_OKAY
     ahb.hrdata    := out.bits.data
+    ahb.hduser    :<= d_user
 
     val request = ahb.htrans === AHBParameters.TRANS_NONSEQ || ahb.htrans === AHBParameters.TRANS_SEQ
     when (ahb.hready && ahb.hsel && request) {
@@ -61,6 +63,7 @@ case class AHBRegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes:
       d_read  := !ahb.hwrite
       d_index := ahb.haddr >> log2Ceil(beatBytes)
       d_mask  := MaskGen(ahb.haddr, ahb.hsize, beatBytes)
+      d_user  :<= ahb.hauser
     }
 
     out.ready := Bool(true)

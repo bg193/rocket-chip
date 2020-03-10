@@ -6,6 +6,7 @@ import Chisel._
 import chisel3.internal.sourceinfo.SourceInfo
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
+import freechips.rocketchip.util.{BundleField, BundleFieldBase}
 import scala.math.{max, min}
 
 case class AHBSlaveParameters(
@@ -41,9 +42,10 @@ case class AHBSlaveParameters(
 }
 
 case class AHBSlavePortParameters(
-  slaves:    Seq[AHBSlaveParameters],
-  beatBytes: Int,
-  lite:      Boolean)
+  slaves:     Seq[AHBSlaveParameters],
+  beatBytes:  Int,
+  lite:       Boolean,
+  userFields: Seq[BundleFieldBase] = Nil)
 {
   require (!slaves.isEmpty)
   require (isPow2(beatBytes))
@@ -67,21 +69,17 @@ case class AHBSlavePortParameters(
 
 case class AHBMasterParameters(
   name:     String,
-  nodePath: Seq[BaseNode] = Seq(),
-  userBits: Seq[UserBits] = Nil){
-    val userBitsWidth = userBits.map(_.width).sum
-  }
+  nodePath: Seq[BaseNode] = Nil)
 
 case class AHBMasterPortParameters(
-  masters: Seq[AHBMasterParameters]){
-    val userBitsWidth = masters.map(_.userBitsWidth).max
-  }
+  masters: Seq[AHBMasterParameters],
+  userFields: Seq[BundleFieldBase] = Nil)
 
 case class AHBBundleParameters(
-  addrBits: Int,
-  dataBits: Int,
-  userBits: Int,
-  lite:     Boolean)
+  addrBits:   Int,
+  dataBits:   Int,
+  userFields: Seq[BundleFieldBase],
+  lite:       Boolean)
 {
   require (dataBits >= 8)
   require (addrBits >= 1)
@@ -99,23 +97,23 @@ case class AHBBundleParameters(
     AHBBundleParameters(
       max(addrBits, x.addrBits),
       max(dataBits, x.dataBits),
-      userBits,
+      BundleField.union(userFields ++ x.userFields),
       lite)
   }
 }
 
 object AHBBundleParameters
 {
-  val emptyBundleParams = AHBBundleParameters(addrBits = 1, dataBits = 8, userBits = 0, lite = true)
+  val emptyBundleParams = AHBBundleParameters(addrBits = 1, dataBits = 8, userFields = Nil, lite = true)
   def union(x: Seq[AHBBundleParameters]) =
     if (x.isEmpty) emptyBundleParams else x.tail.foldLeft(x.head)((x,y) => x.union(y))
 
   def apply(master: AHBMasterPortParameters, slave: AHBSlavePortParameters) =
     new AHBBundleParameters(
-      addrBits = log2Up(slave.maxAddress+1),
-      dataBits = slave.beatBytes * 8,
-      userBits = master.userBitsWidth,
-      lite     = slave.lite)
+      addrBits   = log2Up(slave.maxAddress+1),
+      dataBits   = slave.beatBytes * 8,
+      userFields = BundleField.union(master.userFields ++ slave.userFields),
+      lite       = slave.lite)
 }
 
 case class AHBEdgeParameters(

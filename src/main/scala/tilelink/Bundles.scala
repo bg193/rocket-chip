@@ -179,7 +179,7 @@ final class TLBundleA(params: TLBundleParameters)
   val size    = UInt(width = params.sizeBits)
   val source  = UInt(width = params.sourceBits) // from
   val address = UInt(width = params.addressBits) // to
-  val user    = if (params.aUserBits > 0) Some(UInt(width = params.aUserBits)) else None
+  val user    = BundleMap(params.userFields.filter(_.key.isRequest))
   // variable fields during multibeat:
   val mask    = UInt(width = params.dataBits/8)
   val data    = UInt(width = params.dataBits)
@@ -227,7 +227,7 @@ final class TLBundleD(params: TLBundleParameters)
   val source  = UInt(width = params.sourceBits) // to
   val sink    = UInt(width = params.sinkBits)   // from
   val denied  = Bool() // implies corrupt iff *Data
-  val user    = if (params.dUserBits > 0) Some(UInt(width = params.dUserBits)) else None
+  val user    = BundleMap(params.userFields.filter(_.key.isResponse))
   // variable fields during multibeat:
   val data    = UInt(width = params.dataBits)
   val corrupt = Bool() // only applies to *Data messages

@@ -7,8 +7,11 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.regmapper._
 import freechips.rocketchip.interrupts.{IntSourceNode, IntSourcePortSimple}
-import freechips.rocketchip.util.{HeterogeneousBag, MaskGen}
+import freechips.rocketchip.util._
 import scala.math.{min,max}
+
+case object AXI4RRId extends ControlEchoKey[UInt]("extra_id")
+case class AXI4RRIdField(width: Int) extends SimpleBundleField(AXI4RRId)(UInt(OUTPUT, width = 1 max width), UInt(0))
 
 case class AXI4RegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes: Int = 4, undefZero: Boolean = true, executable: Boolean = false)(implicit valName: ValName)
   extends SinkNode(AXI4Imp)(Seq(AXI4SlavePortParameters(
@@ -33,7 +36,12 @@ case class AXI4RegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes
     val r  = io.r
     val b  = io.b
 
-    val params = RegMapperParams(log2Up((address.mask+1)/beatBytes), beatBytes, ar.bits.params.idBits + ar.bits.params.userBits)
+    val userBundle = BundleMap(AXI4RRIdField(ar.bits.params.idBits) +: ar.bits.params.userFields.filter(_.key.isEcho))
+    val ar_user_in = Wire(userBundle)
+    val aw_user_in = Wire(userBundle)
+    val user_out   = Wire(userBundle)
+
+    val params = RegMapperParams(log2Up((address.mask+1)/beatBytes), beatBytes, user_out.asUInt.getWidth)
     val in = Wire(Decoupled(new RegMapperInput(params)))
 
     // Prefer to execute reads first
@@ -42,8 +50,12 @@ case class AXI4RegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes
     aw.ready := in.ready && !ar.valid && w .valid
     w .ready := in.ready && !ar.valid && aw.valid
 
-    val ar_extra = Cat(Seq(ar.bits.id) ++ ar.bits.user.toList)
-    val aw_extra = Cat(Seq(aw.bits.id) ++ aw.bits.user.toList)
+    ar_user_in :<= ar.bits.user
+    aw_user_in :<= aw.bits.user
+    ar_user_in(AXI4RRId) := ar.bits.id
+    aw_user_in(AXI4RRId) := aw.bits.id
+    val ar_extra = ar_user_in.asUInt
+    val aw_extra = aw_user_in.asUInt
     val in_extra = Mux(ar.valid, ar_extra, aw_extra)
     val addr = Mux(ar.valid, ar.bits.addr, aw.bits.addr)
     val mask = MaskGen(ar.bits.addr, ar.bits.size, beatBytes)
@@ -60,21 +72,20 @@ case class AXI4RegisterNode(address: AddressSet, concurrency: Int = 0, beatBytes
       entries = 2)
 
     // No flow control needed
+    user_out := out.bits.extra.asTypeOf(user_out)
     out.ready := Mux(out.bits.read, r.ready, b.ready)
     r.valid := out.valid &&  out.bits.read
     b.valid := out.valid && !out.bits.read
 
-    val out_id = if (r.bits.params.idBits == 0) UInt(0) else (out.bits.extra >> ar.bits.params.userBits)
-
-    r.bits.id   := out_id
+    r.bits.id   := user_out(AXI4RRId)
     r.bits.data := out.bits.data
     r.bits.last := Bool(true)
     r.bits.resp := AXI4Parameters.RESP_OKAY
-    r.bits.user.foreach { _ := out.bits.extra }
+    r.bits.user :<= user_out
 
-    b.bits.id   := out_id
+    b.bits.id   := user_out(AXI4RRId)
     b.bits.resp := AXI4Parameters.RESP_OKAY
-    b.bits.user.foreach { _ := out.bits.extra }
+    b.bits.user :<= user_out
   }
 }
 

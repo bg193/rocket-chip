@@ -50,6 +50,8 @@ class APBRAM(
 
     val paddr = Cat((mask zip (in.paddr >> log2Ceil(beatBytes)).asBools).filter(_._1).map(_._2).reverse)
     val legal = address.contains(in.paddr)
+    val user = Reg(BundleMap(in.params.userFields.filter(_.key.isEcho)))
+    when (in.psel && !in.penable) { user :<= in.pauser }
 
     val read = in.psel && !in.penable && !in.pwrite
     when (in.psel && !in.penable && in.pwrite && legal) {
@@ -59,5 +61,6 @@ class APBRAM(
     in.pready  := Bool(!fuzzReady) || LFSRNoiseMaker(1)(0)
     in.pslverr := RegEnable(!legal, !in.penable) || (Bool(fuzzError) && LFSRNoiseMaker(1)(0))
     in.prdata  := mem.readAndHold(paddr, read).asUInt
+    in.pduser :<= user
   }
 }

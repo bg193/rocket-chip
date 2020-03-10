@@ -5,6 +5,7 @@ package freechips.rocketchip.amba.apb
 import Chisel._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
+import freechips.rocketchip.util._
 import freechips.rocketchip.regmapper._
 import scala.math.{min,max}
 
@@ -35,7 +36,7 @@ class APBFanout()(implicit p: Parameters) extends LazyModule {
 
       val sel = Vec(route_addrs.map(seq => seq.map(_.contains(in.paddr)).reduce(_ || _)))
       (sel zip io_out) foreach { case (sel, out) =>
-        out := in
+        out :<> in
         out.psel    := sel && in.psel
         out.penable := sel && in.penable
       }

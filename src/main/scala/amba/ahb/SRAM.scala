@@ -81,7 +81,14 @@ class AHBRAM(
     val read = a_request && !a_write
     // In case we choose to stall, we need to hold the read data
     val d_rdata = mem.readAndHold(a_address, read)
-    val d_legal = RegEnable(a_legal, in.hreadyout)
+    val d_legal = Reg(Bool())
+    val d_user  = Reg(BundleMap(in.params.userFields.filter(_.key.isEcho)))
+
+    when (in.hreadyout) {
+      d_legal := a_legal
+      d_user  :<= in.hauser
+    }
+
     // Whenever the port is not needed for reading, execute pending writes
     when (!read && p_valid) {
       p_valid := Bool(false)
@@ -115,5 +122,6 @@ class AHBRAM(
     in.hreadyout := Mux(disable_ahb_fuzzing, Bool(true), { if(fuzzHreadyout) { !d_request || LFSRNoiseMaker(1)(0) }  else { Bool(true) }} )
     in.hresp     := Mux(!d_request || d_legal || !in.hreadyout, AHBParameters.RESP_OKAY, AHBParameters.RESP_ERROR)
     in.hrdata    := Mux(in.hreadyout, muxdata.asUInt, UInt(0))
+    in.hduser    :<= d_user
   }
 }
